@@ -27,6 +27,8 @@
 #include <GFX_FUNCTIONS.h>
 #include <string.h>
 #include "adpcm.h"
+#include "fatcat.h"
+#include "Image.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -49,9 +51,11 @@
 /* Private variables ---------------------------------------------------------*/
 SPI_HandleTypeDef hspi2;
 
+TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 
 UART_HandleTypeDef huart1;
+UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 const unsigned char Ringtone[ADPCMD_PI];
@@ -61,8 +65,7 @@ void LoadAudioFiles(void);
 
 uint8_t RX_BUFFER[BUFFER_LEN];
 uint8_t TX_BUFFER[BUFFER_LEN];
-uint8_t rx_index;
-uint8_t tx = 'O';
+uint8_t rx1, rx2;
 uint8_t text_request = 0;
 
 /* USER CODE END PV */
@@ -73,6 +76,8 @@ static void MX_GPIO_Init(void);
 static void MX_SPI2_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_TIM1_Init(void);
+static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 /* USER CODE END PFP */
 
@@ -80,6 +85,7 @@ static void MX_TIM2_Init(void);
 /* USER CODE BEGIN 0 */
 AudioElement AudioFile;
 uint8_t AudioFileToPlay = 0;
+uint8_t c;
 /*
  void arrange_buffer(UART_HandleTypeDef huart, uint8_t* buffer, uint8_t buffer_length) {
 
@@ -88,9 +94,15 @@ uint8_t AudioFileToPlay = 0;
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	if (huart->Instance == USART1) {
-		text_request = 1;
-		HAL_UART_Receive_IT(&huart1, RX_BUFFER, 20);
+		//text_request = 1;
+		//HAL_UART_Receive_IT(&huart1, RX_BUFFER, 20);
 		//RX_BUFFER[sizeof(RX_BUFFER)-1] = '\0';
+        HAL_UART_Transmit(&huart2, &rx1, 1, 10);
+        HAL_UART_Receive_IT(&huart1, &rx1, 1);
+	}
+	if (huart->Instance == USART2) {
+		HAL_UART_Transmit(&huart1, &rx2, 1, 10);
+		HAL_UART_Receive_IT(&huart2, &rx2, 1);
 	}
 }
 
@@ -128,12 +140,25 @@ int main(void)
   MX_SPI2_Init();
   MX_USART1_UART_Init();
   MX_TIM2_Init();
+  MX_TIM1_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
 
-	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
-	HAL_UART_Receive_IT(&huart1, RX_BUFFER, 20);
-	//ST7735_Init(0);
-	fillScreen(MAGENTA);
+	/*
+	 HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+	 HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
+	 HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+	 HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+	 */
+	//HAL_UART_Receive_IT(&huart1, RX_BUFFER, 20);
+	//HAL_UART_Receive_IT(&huart1, &rx2, 1);
+	//HAL_UART_Receive_IT(&huart2, &rx1, 1);
+	ST7735_Init(0);
+
+	//ST7735_DrawImage(0, 0, ST7735_WIDTH, ST7735_HEIGHT, image_data_Image);
+	//HAL_Delay(3000);
+
+	fillScreen(BLACK);
 	//LoadAudioFiles();
   /* USER CODE END 2 */
 
@@ -152,15 +177,46 @@ int main(void)
 	 //LL_TIM_EnableCounter(TIM3);
 	 *
 	 */
+	uint8_t cmd[] = "AT+PSWD?\r\n";
+
 	while (1) {
 
 		// servo motor
 		HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
 
-		TIM2->CCR1 = 1000;
+	    HAL_UART_Transmit(&huart1, cmd, sizeof(cmd)-1, 100);
+
+	    // listen for response for 200 ms
+	    uint32_t start = HAL_GetTick();
+
+	    while (HAL_GetTick() - start < 200)
+	    {
+	        if (HAL_UART_Receive(&huart1, &rx1, 1, 10) == HAL_OK)
+	        {
+	            HAL_UART_Transmit(&huart2, &rx1, 1, 10); // send to PC
+	        }
+	    }
+
+	    HAL_Delay(1000);
+
+		/*__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 250);
+		 __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 250);
+		 __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 250);
+		 __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 250);
+		 HAL_Delay(3000);*/
+
+	    /*
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 1000);
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 1000);
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1000);
 		HAL_Delay(500);
-		TIM2->CCR1 = 2000;
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 1500);
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 1500);
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1500);
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1500);
 		HAL_Delay(500);
+*/
 
 		//HAL_UART_Transmit(&huart1, (uint8_t*) "AT\r\n", 4, 100);
 		//HAL_Delay(3000);
@@ -175,10 +231,9 @@ int main(void)
 			text_request = 0;
 
 			ST7735_SetRotation(3);
-			ST7735_WriteString(0, 0, (char*) RX_BUFFER, Font_11x18, BLACK,
-			GREEN);
+			//ST7735_WriteString(0, 0, (char*) RX_BUFFER, Font_11x18, RED, BLACK);
 			HAL_Delay(2000);
-			fillScreen(MAGENTA);
+			fillScreen(BLACK);
 
 		}
 
@@ -241,8 +296,11 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART1|RCC_PERIPHCLK_TIM2;
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART1|RCC_PERIPHCLK_USART2
+                              |RCC_PERIPHCLK_TIM1|RCC_PERIPHCLK_TIM2;
   PeriphClkInit.Usart1ClockSelection = RCC_USART1CLKSOURCE_PCLK2;
+  PeriphClkInit.Usart2ClockSelection = RCC_USART2CLKSOURCE_PCLK1;
+  PeriphClkInit.Tim1ClockSelection = RCC_TIM1CLK_HCLK;
   PeriphClkInit.Tim2ClockSelection = RCC_TIM2CLK_HCLK;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
@@ -287,6 +345,90 @@ static void MX_SPI2_Init(void)
   /* USER CODE BEGIN SPI2_Init 2 */
 
   /* USER CODE END SPI2_Init 2 */
+
+}
+
+/**
+  * @brief TIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM1_Init(void)
+{
+
+  /* USER CODE BEGIN TIM1_Init 0 */
+
+  /* USER CODE END TIM1_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
+
+  /* USER CODE BEGIN TIM1_Init 1 */
+
+  /* USER CODE END TIM1_Init 1 */
+  htim1.Instance = TIM1;
+  htim1.Init.Prescaler = 72-1;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim1.Init.Period = 20000-1;
+  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim1.Init.RepetitionCounter = 0;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
+  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
+  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
+  sBreakDeadTimeConfig.DeadTime = 0;
+  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
+  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
+  sBreakDeadTimeConfig.BreakFilter = 0;
+  sBreakDeadTimeConfig.Break2State = TIM_BREAK2_DISABLE;
+  sBreakDeadTimeConfig.Break2Polarity = TIM_BREAK2POLARITY_HIGH;
+  sBreakDeadTimeConfig.Break2Filter = 0;
+  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
+  if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM1_Init 2 */
+
+  /* USER CODE END TIM1_Init 2 */
+  HAL_TIM_MspPostInit(&htim1);
 
 }
 
@@ -342,6 +484,10 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE BEGIN TIM2_Init 2 */
 
   /* USER CODE END TIM2_Init 2 */
@@ -381,6 +527,41 @@ static void MX_USART1_UART_Init(void)
   /* USER CODE BEGIN USART1_Init 2 */
 
   /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
+  * @brief USART2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART2_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART2_Init 0 */
+
+  /* USER CODE END USART2_Init 0 */
+
+  /* USER CODE BEGIN USART2_Init 1 */
+
+  /* USER CODE END USART2_Init 1 */
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 115200;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart2.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart2.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART2_Init 2 */
+
+  /* USER CODE END USART2_Init 2 */
 
 }
 
