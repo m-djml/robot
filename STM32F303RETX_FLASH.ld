@@ -62,11 +62,6 @@ SECTIONS
     . = ALIGN(4);
   } >FLASH
   
-  .myAudioFiles 0x08005000 :
-  {
-  	KEEP(*(.myAudioFiles))
-  }>FLASH
-
   /* The program code and other data into "FLASH" Rom type memory */
   .text :
   {

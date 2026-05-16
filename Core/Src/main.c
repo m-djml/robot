@@ -29,6 +29,7 @@
 #include "adpcm.h"
 #include "fatcat.h"
 #include "Image.h"
+#include "ringtone1.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -50,19 +51,22 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+I2S_HandleTypeDef hi2s3;
+
 SPI_HandleTypeDef hspi2;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim3;
 
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-const unsigned char Ringtone[ADPCMD_PI];
+
 int32_t pwm_val = 0;
 bool direction = 0;
-void LoadAudioFiles(void);
+uint8_t ringtone1[54334];
 
 uint8_t RX_BUFFER[BUFFER_LEN];
 uint8_t TX_BUFFER[BUFFER_LEN];
@@ -79,40 +83,36 @@ static void MX_USART1_UART_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_I2S3_Init(void);
+static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-AudioElement AudioFile;
-uint8_t AudioFileToPlay = 0;
 uint8_t c;
-/*
- void arrange_buffer(UART_HandleTypeDef huart, uint8_t* buffer, uint8_t buffer_length) {
 
- }
- */
+uint16_t txData;
+int txIndex;
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+	if (htim->Instance == TIM3) {
+		txData = ((uint16_t) ringtone1[txIndex + 1] << 8) | ringtone1[txIndex];
+		txIndex = txIndex + 2;
+		if (txIndex > 54334)
+			txIndex = 0;
+		HAL_I2S_Transmit(&hi2s3, &txData, 1, 10);
+	}
+}
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	if (huart->Instance == USART1) {
-		/*
-		text_request = 1;
-		HAL_UART_Transmit(&huart2, &rx1, MSG_SIZE, 100);
-		HAL_UART_Receive_IT(&huart1, &rx1, MSG_SIZE);
-		*/
-
-		rx_index ++;
-		if (rx1[rx_index] == '\n') {
-			rx_index = 0;
-			text_request = 1;
-		}
 		HAL_UART_Receive_IT(&huart1, &rx1, MSG_SIZE);
 	}
 	// uart 2 for AT mode and debugging
 	/*if (huart->Instance == USART2) {
-		HAL_UART_Transmit(&huart1, &rx2, MSG_SIZE, 100);
-		HAL_UART_Receive_IT(&huart2, &rx2, MSG_SIZE);
-	}*/
+	 HAL_UART_Transmit(&huart1, &rx2, MSG_SIZE, 100);
+	 HAL_UART_Receive_IT(&huart2, &rx2, MSG_SIZE);
+	 }*/
 }
 
 /* USER CODE END 0 */
@@ -150,14 +150,18 @@ int main(void) {
 	MX_TIM2_Init();
 	MX_TIM1_Init();
 	MX_USART2_UART_Init();
+	MX_I2S3_Init();
+	MX_TIM3_Init();
 	/* USER CODE BEGIN 2 */
 
-	/*
-	 HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
-	 HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
-	 HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-	 HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-	 */
+	txIndex = 0;
+	HAL_TIM_Base_Start_IT(&htim3);
+
+	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
+	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+
 	HAL_UART_Receive_IT(&huart1, &rx1, MSG_SIZE);
 	//HAL_UART_Receive_IT(&huart1, &rx2, 1);
 	HAL_UART_Receive_IT(&huart2, &rx2, MSG_SIZE);
@@ -165,26 +169,16 @@ int main(void) {
 	//ST7735_DrawImage(0, 0, ST7735_WIDTH, ST7735_HEIGHT, image_data_Image);
 	//HAL_Delay(3000);
 	fillScreen(BLACK);
-	//LoadAudioFiles();
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
-	/*
-	 #ifdef USE_DAC
-	 //HAL_DAC_Start(&hdac1, DAC_CHANNEL_1);
-	 //HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, 0x7FF);
-	 #endif
-	 // capture/compare registers (CC1 PWM duty 50%)
-	 TIM3->CCR1 = DEFAULT_STARTUP_VAL;
-	 TIM3->CCR2 = DEFAULT_STARTUP_VAL;
-	 //LL_TIM_EnableIT_UPDATE(TIM3);
-	 TIM3->CCER |= TIM_CCER_CC2E | TIM_CCER_CC1E;
-	 //LL_TIM_EnableCounter(TIM3);
-	 *
-	 */
+
 	//uint8_t cmd[] = "AT+UART=9600,1,0\r\n";
 	char lcd_buf[11];
+	int D_value = 1000; int A_value = 1000;
+	int B_value = 1500; int C_value = 1500;
+	bool D_peak = 0; bool A_peak = 0; bool B_peak = 0; bool C_peak = 0;
 
 	while (1) {
 
@@ -199,7 +193,7 @@ int main(void) {
 			//lcd_buf[0] = rx1;
 			//lcd_buf[10] = '\0';
 			//ST7735_WriteString(0, 0, lcd_buf, Font_11x18, RED, BLACK);
-			HAL_Delay(2000);
+			// if not black ?... --> hal gettick
 			fillScreen(BLACK);
 
 		}
@@ -216,42 +210,55 @@ int main(void) {
 		 HAL_Delay(2000);
 		 */
 
-		/*__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 250);
-		 __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 250);
-		 __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 250);
-		 __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 250);
-		 HAL_Delay(3000);*/
+		/*
+		// SERVO A
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, A_value);
+		if (!A_peak) A_value+=10;
+		else A_value-=10;
+		if (A_value >= 1500) A_peak = 1;
+		if (A_value <= 750) A_peak = 0;
+*/
+
+		// SERVO D
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, D_value);
+		if (!D_peak) D_value+=10;
+		else D_value-=10;
+		if (D_value >= 1500) D_peak = 1;
+		if (D_value <= 750) D_peak = 0;
+
+		/*
+		// SERVO B
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, B_value);
+		if (!B_peak) B_value+=10;
+		else B_value-=10;
+		if (B_value <= 1000) B_peak = 1;
+		if (B_value >= 1500) B_peak = 0;
+
+		// SERVO C
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, C_value);
+		if (!C_peak) C_value+=10;
+		else C_value-=10;
+		if (C_value <= 1000) C_peak = 1;
+		if (C_value >= 1500) C_peak = 0;
+		*/
 
 		/*
 		 __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 1000);
 		 __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 1000);
-		 __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
-		 __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1000);
-		 HAL_Delay(500);
-		 __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 1500);
-		 __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 1500);
 		 __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1500);
 		 __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1500);
-		 HAL_Delay(500);
+		 HAL_Delay(400);
+		 __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 1500);
+		 __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 1500);
+		 __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
+		 __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1000);
+		 HAL_Delay(400);
 		 */
 
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */
-
-		/*
-		 if (AudioFileToPlay >= 1) {
-		 AudioFileToPlay = 0;
-		 } else {
-		 AudioFileToPlay++;
-		 }
-		 // Disable the TIM3 Interrupt
-		 NVIC_EnableIRQ(TIM3_IRQn);
-		 // stop the timer
-		 LL_TIM_EnableCounter(TIM3);
-		 HAL_Delay(100);
-		 */
-
+		HAL_Delay(10);
 	}
 	/* USER CODE END 3 */
 }
@@ -291,15 +298,50 @@ void SystemClock_Config(void) {
 	if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK) {
 		Error_Handler();
 	}
-	PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART1
-			| RCC_PERIPHCLK_USART2 | RCC_PERIPHCLK_TIM1 | RCC_PERIPHCLK_TIM2;
+	PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_I2S
+			| RCC_PERIPHCLK_USART1 | RCC_PERIPHCLK_USART2 | RCC_PERIPHCLK_TIM1
+			| RCC_PERIPHCLK_TIM2 | RCC_PERIPHCLK_TIM34;
 	PeriphClkInit.Usart1ClockSelection = RCC_USART1CLKSOURCE_PCLK2;
 	PeriphClkInit.Usart2ClockSelection = RCC_USART2CLKSOURCE_PCLK1;
+	PeriphClkInit.I2sClockSelection = RCC_I2SCLKSOURCE_SYSCLK;
 	PeriphClkInit.Tim1ClockSelection = RCC_TIM1CLK_HCLK;
 	PeriphClkInit.Tim2ClockSelection = RCC_TIM2CLK_HCLK;
+	PeriphClkInit.Tim34ClockSelection = RCC_TIM34CLK_HCLK;
 	if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK) {
 		Error_Handler();
 	}
+}
+
+/**
+ * @brief I2S3 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_I2S3_Init(void) {
+
+	/* USER CODE BEGIN I2S3_Init 0 */
+
+	/* USER CODE END I2S3_Init 0 */
+
+	/* USER CODE BEGIN I2S3_Init 1 */
+
+	/* USER CODE END I2S3_Init 1 */
+	hi2s3.Instance = SPI3;
+	hi2s3.Init.Mode = I2S_MODE_MASTER_TX;
+	hi2s3.Init.Standard = I2S_STANDARD_PHILIPS;
+	hi2s3.Init.DataFormat = I2S_DATAFORMAT_16B;
+	hi2s3.Init.MCLKOutput = I2S_MCLKOUTPUT_DISABLE;
+	hi2s3.Init.AudioFreq = I2S_AUDIOFREQ_16K;
+	hi2s3.Init.CPOL = I2S_CPOL_LOW;
+	hi2s3.Init.ClockSource = I2S_CLOCK_SYSCLK;
+	hi2s3.Init.FullDuplexMode = I2S_FULLDUPLEXMODE_DISABLE;
+	if (HAL_I2S_Init(&hi2s3) != HAL_OK) {
+		Error_Handler();
+	}
+	/* USER CODE BEGIN I2S3_Init 2 */
+
+	/* USER CODE END I2S3_Init 2 */
+
 }
 
 /**
@@ -480,6 +522,48 @@ static void MX_TIM2_Init(void) {
 }
 
 /**
+ * @brief TIM3 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_TIM3_Init(void) {
+
+	/* USER CODE BEGIN TIM3_Init 0 */
+
+	/* USER CODE END TIM3_Init 0 */
+
+	TIM_ClockConfigTypeDef sClockSourceConfig = { 0 };
+	TIM_MasterConfigTypeDef sMasterConfig = { 0 };
+
+	/* USER CODE BEGIN TIM3_Init 1 */
+
+	/* USER CODE END TIM3_Init 1 */
+	htim3.Instance = TIM3;
+	htim3.Init.Prescaler = 71;
+	htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+	htim3.Init.Period = 31;
+	htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+	htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+	if (HAL_TIM_Base_Init(&htim3) != HAL_OK) {
+		Error_Handler();
+	}
+	sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+	if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK) {
+		Error_Handler();
+	}
+	sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+	sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+	if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig)
+			!= HAL_OK) {
+		Error_Handler();
+	}
+	/* USER CODE BEGIN TIM3_Init 2 */
+
+	/* USER CODE END TIM3_Init 2 */
+
+}
+
+/**
  * @brief USART1 Initialization Function
  * @param None
  * @retval None
@@ -604,10 +688,6 @@ static void MX_GPIO_Init(void) {
 }
 
 /* USER CODE BEGIN 4 */
-void LoadAudioFiles(void) {
-	AudioFile.AudioFiles[0] = (uint32_t) &Ringtone;
-	AudioFile.AudioSize[0] = NELEMS(Ringtone);
-}
 /* USER CODE END 4 */
 
 /**
