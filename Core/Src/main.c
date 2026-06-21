@@ -210,14 +210,12 @@ int main(void) {
 		 HAL_Delay(2000);
 		 */
 
-		/*
 		// SERVO A
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, A_value);
 		if (!A_peak) A_value+=10;
 		else A_value-=10;
 		if (A_value >= 1500) A_peak = 1;
 		if (A_value <= 750) A_peak = 0;
-*/
 
 		// SERVO D
 		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, D_value);
@@ -226,23 +224,22 @@ int main(void) {
 		if (D_value >= 1500) D_peak = 1;
 		if (D_value <= 750) D_peak = 0;
 
-		/*
 		// SERVO B
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, B_value);
 		if (!B_peak) B_value+=10;
 		else B_value-=10;
-		if (B_value <= 1000) B_peak = 1;
-		if (B_value >= 1500) B_peak = 0;
+		if (B_value >= 1500) B_peak = 1;
+		if (B_value <= 750) B_peak = 0;
+
 
 		// SERVO C
 		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, C_value);
 		if (!C_peak) C_value+=10;
 		else C_value-=10;
-		if (C_value <= 1000) C_peak = 1;
-		if (C_value >= 1500) C_peak = 0;
-		*/
+		if (C_value >= 1500) C_peak = 1;
+		if (C_value <= 750) C_peak = 0;
 
-		/*
+	/*
 		 __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 1000);
 		 __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 1000);
 		 __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1500);
