@@ -96,6 +96,11 @@ void OV7670::QQVGA()
   i2c.writeRegister(ADDR, REG_SCALING_PCLK_DELAY, 0x02);
 }
   
+// added
+void OV7670::setFrameRateDivider(byte divider) {
+  i2c.writeRegister(ADDR, REG_CLKRC, 0x80 | (divider & 0x3F));
+}
+
 void OV7670::QQVGARGB565()
 {
   i2c.writeRegister(ADDR, REG_COM7, 0b10000000);  //all registers default
