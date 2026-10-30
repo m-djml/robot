@@ -22,14 +22,15 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdbool.h>
-#include <st7735.h>
-#include <fonts.h>
-#include <GFX_FUNCTIONS.h>
+//#include <st7735.h>
+//#include <fonts.h>
+//#include <GFX_FUNCTIONS.h>
 #include <string.h>
-#include "adpcm.h"
-#include "fatcat.h"
-#include "Image.h"
-#include "ringtone1.h"
+#include <stdio.h>
+//#include "adpcm.h"
+//#include "fatcat.h"
+//#include "Image.h"
+//#include "ringtone1.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -43,6 +44,17 @@
 #define DEFAULT_STARTUP_VAL (0x80)
 #define MSG_SIZE 1
 
+// gyroscope & accelerometer defines
+#define MPU6050_ADDR 0xD0
+#define SMPLRT_DIV_REG 0x19
+#define GYRO_CONFIG_REG 0x1B
+#define ACCEL_CONFIG_REG 0x1C
+#define ACCEL_XOUT_H_REG 0x3B
+#define TEMP_OUT_H_REG 0x41
+#define GYRO_XOUT_H_REG 0x43
+#define PWR_MGMT_1_REG 0x6B
+#define WHO_AM_I_REG 0x75
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -51,9 +63,7 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-I2S_HandleTypeDef hi2s3;
-
-SPI_HandleTypeDef hspi2;
+I2C_HandleTypeDef hi2c1;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim3;
@@ -66,7 +76,7 @@ UART_HandleTypeDef huart2;
 int32_t pwm_val = 0;
 bool direction = 0;
 uint8_t ringtone1[54334];
-
+uint8_t accel_update = 0;
 uint8_t RX_BUFFER[BUFFER_LEN];
 uint8_t TX_BUFFER[BUFFER_LEN];
 uint8_t rx1, rx2;
@@ -77,20 +87,21 @@ volatile uint8_t text_request, rx_index = 0;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_SPI2_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_TIM1_Init(void);
-static void MX_USART2_UART_Init(void);
-static void MX_I2S3_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_I2C1_Init(void);
+static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 uint8_t c;
+double Accel_X_RAW, Accel_Y_RAW, Accel_Z_RAW, Az, Ay, Ax;
 volatile int text_timeout = 100; // timeout = text_timeout * hal delay
 uint16_t txData;
+uint8_t stat = 0;
 int txIndex;
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	if (htim->Instance == TIM3) {
@@ -98,7 +109,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		txIndex = txIndex + 2;
 		if (txIndex > 54334)
 			txIndex = 0;
-		HAL_I2S_Transmit(&hi2s3, &txData, 1, 10);
+		//HAL_I2S_Transmit(&hi2s3, &txData, 1, 10);
 	}
 }
 
@@ -114,25 +125,90 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	 }*/
 }
 
-int isUp(uint8_t* msg){
-	if (strcmp((char*)msg, "U") == 0) return 1;
+int isUp(uint8_t *msg) {
+	if (strcmp((char*) msg, "U") == 0)
+		return 1;
 	return 0;
 }
-int isDown(uint8_t* msg){
-	if (strcmp((char*)msg, "D") == 0) return 1;
+int isDown(uint8_t *msg) {
+	if (strcmp((char*) msg, "D") == 0)
+		return 1;
 	return 0;
 }
-int isLeft(uint8_t* msg){
-	if (strcmp((char*)msg, "L") == 0) return 1;
+int isLeft(uint8_t *msg) {
+	if (strcmp((char*) msg, "L") == 0)
+		return 1;
 	return 0;
 }
-int isRight(uint8_t* msg){
-	if (strcmp((char*)msg, "R") == 0) return 1;
+int isRight(uint8_t *msg) {
+	if (strcmp((char*) msg, "R") == 0)
+		return 1;
 	return 0;
 }
-int stop(uint8_t* msg){
-	if (strcmp((char*)msg, "S") == 0) return 1;
+int stop(uint8_t *msg) {
+	if (strcmp((char*) msg, "S") == 0)
+		return 1;
 	return 0;
+}
+
+/* source : https://controllerstech.com/how-to-interface-mpu6050-gy-521-with-stm32/ */
+void MPU6050_Init(void) {
+	uint8_t check;
+	uint8_t Data;
+
+	HAL_StatusTypeDef status = HAL_I2C_Mem_Read(&hi2c1, MPU6050_ADDR, 0x75, 1,
+			&check, 1, 1000); // read WHO_AM_I
+	switch (status) {
+	case HAL_OK:
+		stat = '0';
+		break;
+	case HAL_ERROR:
+		stat = '1';
+		break;
+	case HAL_BUSY:
+		stat = '2';
+		break;
+	case HAL_TIMEOUT:
+		stat = '3';
+		break;
+	default:
+		break;
+	}
+	HAL_UART_Transmit(&huart2, &stat, 1, 100);
+	if (check == 0x68) // 0x68 will be returned by the sensor if everything goes well
+			{
+		// power management register 0X6B we should write all 0's to wake the sensor up
+		Data = 0;
+		HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, 0x6B, 1, &Data, 1, 1000);
+		// Set DATA RATE of 1KHz by writing SMPLRT_DIV register
+		Data = 0x07;
+		HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, 0x19, 1, &Data, 1, 1000);
+		// Set accelerometer configuration in ACCEL_CONFIG Register
+		Data = 0x00; // XA_ST=0,YA_ST=0,ZA_ST=0, FS_SEL=0 -> <strong>±</strong> 2g
+		HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, ACCEL_CONFIG_REG, 1, &Data, 1,
+				1000);
+		// Set Gyroscopic configuration in GYRO_CONFIG Register
+		Data = 0x00; // XG_ST=0,YG_ST=0,ZG_ST=0, FS_SEL=0 -> <strong>±</strong> 250 ̐/s
+		HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, GYRO_CONFIG_REG, 1, &Data, 1,
+				1000);
+		// 2. Activer le filtre passe-bas numérique (CONFIG)
+		// Écrit 0x05 dans le registre 0x1A pour éliminer les oscillations de bruit
+		Data = 0x01;
+		HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, 0x1A, 1, &Data, 1, 1000);
+	}
+}
+
+void MPU6050_Read_Accel(void) {
+	uint8_t Rec_Data[6] = { 0, 0, 0, 0, 0, 0 };
+
+	// Read 6 BYTES of data starting from ACCEL_XOUT_H (0x3B) register
+	HAL_I2C_Mem_Read(&hi2c1, MPU6050_ADDR, 0x3B, 1, Rec_Data, 6, 1000);
+	Accel_X_RAW = (int16_t) (Rec_Data[0] << 8 | Rec_Data[1]);
+	Accel_Y_RAW = (int16_t) (Rec_Data[2] << 8 | Rec_Data[3]);
+	Accel_Z_RAW = (int16_t) (Rec_Data[4] << 8 | Rec_Data[5]);
+	Ax = (float) Accel_X_RAW / 16384.0;
+	Ay = (float) Accel_Y_RAW / 16384.0;
+	Az = (float) Accel_Z_RAW / 16384.0;
 }
 
 /* USER CODE END 0 */
@@ -166,57 +242,71 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_SPI2_Init();
   MX_USART1_UART_Init();
   MX_TIM1_Init();
-  MX_USART2_UART_Init();
-  MX_I2S3_Init();
   MX_TIM3_Init();
+  MX_I2C1_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-
+	MPU6050_Init();
 	txIndex = 0;
-	HAL_TIM_Base_Start_IT(&htim3);
+//	HAL_TIM_Base_Start_IT(&htim3);
 
-	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+//	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+//	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
 
 	HAL_UART_Receive_IT(&huart1, &rx1, MSG_SIZE);
-	ST7735_Init(0);
+	//ST7735_Init(0);
 	//ST7735_DrawImage(0, 0, ST7735_WIDTH, ST7735_HEIGHT, image_data_Image);
 	//HAL_Delay(3000);
-	fillScreen(BLACK);
+	//fillScreen(BLACK);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-
-
+	uint32_t last_sample = 0;
 	while (1) {
 
 		HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
 
+		char res[25] = "";
 
-		if (text_request == 1) {
+		//HAL_UART_Transmit(&huart2, &stat, 1, 100);
+		//HAL_UART_Transmit(&huart2, "\n", 1, 100);
 
-			/*if (text_timeout == 0) {
-				text_timeout = 100;
-				text_request = 0;
-			}
-			else {*/
-				ST7735_SetRotation(0);
-				ST7735_WriteString(0, 0, (char*) &rx1, Font_11x18, CYAN, BLACK);
-				text_request = 0;
-				//text_timeout -= 1;
-			//}
-			//lcd_buf[0] = rx1;
-			//lcd_buf[10] = '\0';
-			//ST7735_WriteString(0, 0, lcd_buf, Font_11x18, RED, BLACK);
-			// if not black ?... --> hal gettick
-			//fillScreen(BLACK);
+		uint32_t now = HAL_GetTick();
 
-		//} else {
-			//fillScreen(BLACK);
+		if (now - last_sample >= 10) {
+			last_sample += 10;
+			MPU6050_Read_Accel();
+			sprintf(res, "%d,%d,%d\r\n", (int16_t)Accel_X_RAW, (int16_t)Accel_Y_RAW, (int16_t)Accel_Z_RAW);
+			HAL_UART_Transmit(&huart2, (uint8_t*) res, strlen(res), 100);
 		}
+
+		//sprintf(buf, "\e[1;1H\e[2J");
+		//HAL_UART_Transmit(&huart2, (uint8_t*) buf, 10, 100);
+
+//		if (text_request == 1) {
+//
+//			/*if (text_timeout == 0) {
+//				text_timeout = 100;
+//				text_request = 0;
+//			}
+//			else {*/
+//				ST7735_SetRotation(0);
+//				ST7735_WriteString(0, 0, (char*) &rx1, Font_11x18, CYAN, BLACK);
+//				text_request = 0;
+//				//text_timeout -= 1;
+//			//}
+//			//lcd_buf[0] = rx1;
+//			//lcd_buf[10] = '\0';
+//			//ST7735_WriteString(0, 0, lcd_buf, Font_11x18, RED, BLACK);
+//			// if not black ?... --> hal gettick
+//			//fillScreen(BLACK);
+//
+//		//} else {
+//			//fillScreen(BLACK);
+//		}
 
 		/*
 		 // AT MODE
@@ -233,36 +323,36 @@ int main(void)
 
 		// continuous servo
 		// 100 = STOP
-
 		/*
-		for (int i = 0; i < 1500; i+=100) {
-			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, i);
-			HAL_Delay(1000);
-		}
-		*/
+		 for (int i = 0; i < 1500; i+=100) {
+		 __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, i);
+		 HAL_Delay(1000);
+		 }
+		 */
 
-		if (isUp(&rx1)) {
-			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 90);
-			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 60);
-		} else if (isDown(&rx1)) {
-			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 60);
-			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 90);
-		} else if (isLeft(&rx1)) {
-			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 75);
-			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 60);
-		} else if (isRight(&rx1)) {
-			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 60);
-			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 75);
-		} else {
-			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 75);
-			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 75);
-		}
-
+//		faire avancer les wheels
+		/*
+		 if (isUp(&rx1)) {
+		 __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 90);
+		 __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 60);
+		 } else if (isDown(&rx1)) {
+		 __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 60);
+		 __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 90);
+		 } else if (isLeft(&rx1)) {
+		 __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 75);
+		 __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 60);
+		 } else if (isRight(&rx1)) {
+		 __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 60);
+		 __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 75);
+		 } else {
+		 __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 75);
+		 __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 75);
+		 }
+		 */
 
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-		HAL_Delay(10);
 	}
   /* USER CODE END 3 */
 }
@@ -280,9 +370,10 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
@@ -305,12 +396,12 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_I2S|RCC_PERIPHCLK_USART1
-                              |RCC_PERIPHCLK_USART2|RCC_PERIPHCLK_TIM1
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART1|RCC_PERIPHCLK_USART2
+                              |RCC_PERIPHCLK_I2C1|RCC_PERIPHCLK_TIM1
                               |RCC_PERIPHCLK_TIM34;
   PeriphClkInit.Usart1ClockSelection = RCC_USART1CLKSOURCE_PCLK2;
   PeriphClkInit.Usart2ClockSelection = RCC_USART2CLKSOURCE_PCLK1;
-  PeriphClkInit.I2sClockSelection = RCC_I2SCLKSOURCE_SYSCLK;
+  PeriphClkInit.I2c1ClockSelection = RCC_I2C1CLKSOURCE_HSI;
   PeriphClkInit.Tim1ClockSelection = RCC_TIM1CLK_HCLK;
   PeriphClkInit.Tim34ClockSelection = RCC_TIM34CLK_HCLK;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
@@ -320,76 +411,50 @@ void SystemClock_Config(void)
 }
 
 /**
-  * @brief I2S3 Initialization Function
+  * @brief I2C1 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_I2S3_Init(void)
+static void MX_I2C1_Init(void)
 {
 
-  /* USER CODE BEGIN I2S3_Init 0 */
+  /* USER CODE BEGIN I2C1_Init 0 */
 
-  /* USER CODE END I2S3_Init 0 */
+  /* USER CODE END I2C1_Init 0 */
 
-  /* USER CODE BEGIN I2S3_Init 1 */
+  /* USER CODE BEGIN I2C1_Init 1 */
 
-  /* USER CODE END I2S3_Init 1 */
-  hi2s3.Instance = SPI3;
-  hi2s3.Init.Mode = I2S_MODE_MASTER_TX;
-  hi2s3.Init.Standard = I2S_STANDARD_PHILIPS;
-  hi2s3.Init.DataFormat = I2S_DATAFORMAT_16B;
-  hi2s3.Init.MCLKOutput = I2S_MCLKOUTPUT_DISABLE;
-  hi2s3.Init.AudioFreq = I2S_AUDIOFREQ_16K;
-  hi2s3.Init.CPOL = I2S_CPOL_LOW;
-  hi2s3.Init.ClockSource = I2S_CLOCK_SYSCLK;
-  hi2s3.Init.FullDuplexMode = I2S_FULLDUPLEXMODE_DISABLE;
-  if (HAL_I2S_Init(&hi2s3) != HAL_OK)
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.Timing = 0x00201D2B;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN I2S3_Init 2 */
 
-  /* USER CODE END I2S3_Init 2 */
-
-}
-
-/**
-  * @brief SPI2 Initialization Function
-  * @param None
-  * @retval None
+  /** Configure Analogue filter
   */
-static void MX_SPI2_Init(void)
-{
-
-  /* USER CODE BEGIN SPI2_Init 0 */
-
-  /* USER CODE END SPI2_Init 0 */
-
-  /* USER CODE BEGIN SPI2_Init 1 */
-
-  /* USER CODE END SPI2_Init 1 */
-  /* SPI2 parameter configuration*/
-  hspi2.Instance = SPI2;
-  hspi2.Init.Mode = SPI_MODE_MASTER;
-  hspi2.Init.Direction = SPI_DIRECTION_2LINES;
-  hspi2.Init.DataSize = SPI_DATASIZE_8BIT;
-  hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
-  hspi2.Init.CLKPhase = SPI_PHASE_1EDGE;
-  hspi2.Init.NSS = SPI_NSS_SOFT;
-  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
-  hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
-  hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
-  hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
-  hspi2.Init.CRCPolynomial = 7;
-  hspi2.Init.CRCLength = SPI_CRC_LENGTH_DATASIZE;
-  hspi2.Init.NSSPMode = SPI_NSS_PULSE_ENABLE;
-  if (HAL_SPI_Init(&hspi2) != HAL_OK)
+  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN SPI2_Init 2 */
 
-  /* USER CODE END SPI2_Init 2 */
+  /** Configure Digital filter
+  */
+  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
 
 }
 
@@ -573,7 +638,7 @@ static void MX_USART2_UART_Init(void)
 
   /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
-  huart2.Init.BaudRate = 9600;
+  huart2.Init.BaudRate = 115200;
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
   huart2.Init.StopBits = UART_STOPBITS_1;
   huart2.Init.Parity = UART_PARITY_NONE;
